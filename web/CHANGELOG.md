@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.2](https://github.com/santifer/career-ops/compare/web-v0.6.1...web-v0.6.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **deps:** patch both HIGH advisories in web (js-yaml 4.3.1, nanoid 3.3.18) ([a094ec9](https://github.com/santifer/career-ops/commit/a094ec9ddbe8f21e8db6dba87f548532af2a820e))
+* **web:** finish Unicode company keys for explore + registry ([#2668](https://github.com/santifer/career-ops/issues/2668)) ([c294242](https://github.com/santifer/career-ops/commit/c294242dbb6a78a03bac738f397c568c02316971))
+* **web:** let the pipeline table scroll horizontally instead of clipping on narrow screens ([#2363](https://github.com/santifer/career-ops/issues/2363)) ([632031c](https://github.com/santifer/career-ops/commit/632031c9cb8ae95311a36310bb6cd2713497136c))
+
 ## [0.6.1](https://github.com/santifer/career-ops/compare/web-v0.6.0...web-v0.6.1) (2026-08-10)
 
 

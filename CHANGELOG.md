@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.27.0](https://github.com/santifer/career-ops/compare/career-ops-v1.26.0...career-ops-v1.27.0) (2026-08-11)
+
+
+### Features
+
+* **cli:** add --help / -h usage block to stats.mjs ([#2556](https://github.com/santifer/career-ops/issues/2556)) ([3d8b53d](https://github.com/santifer/career-ops/commit/3d8b53dcf41917d889deff8435e869a5a53c6550))
+* **providers:** Eightfold AI talent-acquisition boards ([#2684](https://github.com/santifer/career-ops/issues/2684)) ([e991d58](https://github.com/santifer/career-ops/commit/e991d5853fdf708639721124c9bac17ff291f2b0))
+* **scan:** AND-groups in title_filter.positive ([#2552](https://github.com/santifer/career-ops/issues/2552)) ([5483083](https://github.com/santifer/career-ops/commit/548308354899de91be27fa2df8fefd176ef88e01))
+
+
+### Bug Fixes
+
+* **batch:** retry state updates and lock reservations to prevent worker silent drops ([#2417](https://github.com/santifer/career-ops/issues/2417)) ([5404185](https://github.com/santifer/career-ops/commit/5404185deff59f8604014c63060458d0b22c640c))
+* **ci:** skip the upgrade leg when nothing managed changed, instead of failing ([#2697](https://github.com/santifer/career-ops/issues/2697)) ([9dcfd2f](https://github.com/santifer/career-ops/commit/9dcfd2f668628879539c2ccfb3f17ce67f2824eb))
+* **cv:** Korean and Traditional Chinese CVs had no font rule ([#2616](https://github.com/santifer/career-ops/issues/2616)) ([994552d](https://github.com/santifer/career-ops/commit/994552dc5d3faecacdf23f56e21e1b845fbf1aa7))
+* **deps:** patch both HIGH advisories in web (js-yaml 4.3.1, nanoid 3.3.18) ([a094ec9](https://github.com/santifer/career-ops/commit/a094ec9ddbe8f21e8db6dba87f548532af2a820e))
+* **followup-cadence:** parse annotated pins, and add a retire directive ([#2514](https://github.com/santifer/career-ops/issues/2514)) ([b4f6b2d](https://github.com/santifer/career-ops/commit/b4f6b2dd4b55c8172e56ef776f1e4fd82bce4acf))
+* **jd-similarity:** the seniority gate fired on JD boilerplate ([#2661](https://github.com/santifer/career-ops/issues/2661)) ([772ea35](https://github.com/santifer/career-ops/commit/772ea35153f88a101c3d22da1741cb79804fae4d))
+* **jd-skill-gap:** recognize sentence-form requirement headings ([#2686](https://github.com/santifer/career-ops/issues/2686)) ([fd9ca41](https://github.com/santifer/career-ops/commit/fd9ca41d372886b1c095b8ba689e48950da6260f))
+* **ollama:** include profile context in evaluations ([#2664](https://github.com/santifer/career-ops/issues/2664)) ([ef2a82f](https://github.com/santifer/career-ops/commit/ef2a82f6970302733c35ebba9b3a30ec5fac65f1))
+* **oraclecloud:** accept Oracle's numbered tenant apexes (oraclecloud1-99.com) ([#2683](https://github.com/santifer/career-ops/issues/2683)) ([a23ebc1](https://github.com/santifer/career-ops/commit/a23ebc1a2f88a16db98af9f3a16e8c4041b5bded))
+* **providers:** fill in the docs and vendor-detection gaps ([#2658](https://github.com/santifer/career-ops/issues/2658)) ([7152907](https://github.com/santifer/career-ops/commit/7152907e88fd2daa05c83f8351ea873f8296e072))
+* **providers:** harden workable with retry, headers, and serialization ([#2675](https://github.com/santifer/career-ops/issues/2675)) ([feabcd4](https://github.com/santifer/career-ops/commit/feabcd45b3615af6d8871f89f17246dbbab3a811))
+* **providers:** isRetryableError no longer misclassifies a refused redirect ([#2657](https://github.com/santifer/career-ops/issues/2657)) ([f8feaa5](https://github.com/santifer/career-ops/commit/f8feaa53c3f7bb8cf0cc33196d0ca3bf999951da))
+* **reply-matcher:** require corroboration for partial role-title matches ([#2672](https://github.com/santifer/career-ops/issues/2672)) ([3215fa3](https://github.com/santifer/career-ops/commit/3215fa309d5158d2ea51a97a5074792e1d9138d7))
+* **states:** aliases the engine accepts were missing from states.yml ([#2615](https://github.com/santifer/career-ops/issues/2615)) ([04ef492](https://github.com/santifer/career-ops/commit/04ef4925c8271112cfcd9711405b7bbc3ae3025f))
+* **web:** finish Unicode company keys for explore + registry ([#2668](https://github.com/santifer/career-ops/issues/2668)) ([c294242](https://github.com/santifer/career-ops/commit/c294242dbb6a78a03bac738f397c568c02316971))
+* **web:** let the pipeline table scroll horizontally instead of clipping on narrow screens ([#2363](https://github.com/santifer/career-ops/issues/2363)) ([632031c](https://github.com/santifer/career-ops/commit/632031c9cb8ae95311a36310bb6cd2713497136c))
+
 ## [1.26.0](https://github.com/santifer/career-ops/compare/career-ops-v1.25.0...career-ops-v1.26.0) (2026-08-10)
 
 
