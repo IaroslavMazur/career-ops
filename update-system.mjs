@@ -747,10 +747,32 @@ function gitStatusEntries() {
     }));
 }
 
+/**
+ * Read a string-literal array out of updater source text.
+ *
+ * Comments are stripped before the literals are scraped, because the scrape is
+ * a regex and a regex cannot tell a quote in code from one in prose. An
+ * apostrophe in `// upstream's own files` opens a string that closes on the
+ * NEXT declared path, destroying it and returning the comment text in its
+ * place; `// means "do not touch"` adds a phantom path nobody declared.
+ * Neither throws, so the caller gets a plausible-looking list that is wrong.
+ *
+ * That matters most where this reads a source we did not write: apply() calls
+ * it on the TARGET updater fetched from FETCH_HEAD, so one apostrophe added
+ * upstream would corrupt the manifest on every client that upgrades, not on
+ * the machine where it was typed (#3099).
+ *
+ * @param {string} source - Updater source text.
+ * @param {string} name - Array binding to read, e.g. 'SYSTEM_PATHS'.
+ * @returns {string[]} Declared entries, in source order. Empty when absent.
+ */
 export function extractArrayFromSource(source, name) {
   const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*\\[([\\s\\S]*?)\\];`));
   if (!match) return [];
-  return Array.from(match[1].matchAll(/['"]([^'"]+)['"]/g), (entry) => entry[1]);
+  const body = match[1]
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+  return Array.from(body.matchAll(/['"]([^'"]+)['"]/g), (entry) => entry[1]);
 }
 
 function mergePathLists(...lists) {
