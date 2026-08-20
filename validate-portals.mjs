@@ -135,6 +135,20 @@ export async function validatePortalsConfig(config, { providerIds = new Set() } 
     }
   }
 
+  // Optional per-scanner override consumed only by scan-ats-full.mjs. Same
+  // shape as title_filter, so it gets the same structural checks — an
+  // unvalidated key would let a typo ("positve") silently resolve to a
+  // profile with no positive keywords, which matches every posting.
+  if (config.title_filter_full !== undefined) {
+    if (!isObject(config.title_filter_full)) {
+      add(errors, 'title_filter_full', 'title_filter_full must be an object');
+    } else {
+      validateKeywordList(config.title_filter_full.positive, 'title_filter_full.positive', errors);
+      validateKeywordList(config.title_filter_full.negative, 'title_filter_full.negative', errors);
+      validateKeywordList(config.title_filter_full.seniority_boost, 'title_filter_full.seniority_boost', errors);
+    }
+  }
+
   if (config.location_filter !== undefined) {
     if (!isObject(config.location_filter)) {
       add(errors, 'location_filter', 'location_filter must be an object');
