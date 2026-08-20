@@ -4427,6 +4427,8 @@ try {
   const badContentFilterPath = join(tmp, 'bad-content-filter.yml');
   const deadByTitleKeywordPath = join(tmp, 'dead-by-title-keyword.yml');
   const badVisaFilterPath = join(tmp, 'bad-visa-filter.yml');
+  const typoTitleFilterFullPath = join(tmp, 'typo-title-filter-full.yml');
+  const emptyTitleFilterFullPath = join(tmp, 'empty-title-filter-full.yml');
 
   writeFileSync(validPath, `
 title_filter:
@@ -4512,6 +4514,34 @@ tracked_companies:
     careers_url: "https://jobs.lever.co/acme"
 `, 'utf-8');
 
+  // A misspelled title_filter_full field must be an ERROR, not a shrug. The
+  // typo leaves `positive` undefined, buildTitleFilter reads an empty positive
+  // list as "no positive constraint", and scan-ats-full then matches every
+  // title on every board it sweeps — the precise failure the key exists to
+  // prevent, arriving silently.
+  writeFileSync(typoTitleFilterFullPath, `
+title_filter:
+  positive: ["AI Engineer"]
+title_filter_full:
+  positve: ["Solana"]
+tracked_companies:
+  - name: "Acme"
+    careers_url: "https://jobs.lever.co/acme"
+`, 'utf-8');
+
+  // An explicitly empty positive list is a deliberate choice, not a typo, and
+  // must stay valid — only UNKNOWN fields are rejected.
+  writeFileSync(emptyTitleFilterFullPath, `
+title_filter:
+  positive: ["AI Engineer"]
+title_filter_full:
+  positive: []
+  negative: ["intern"]
+tracked_companies:
+  - name: "Acme"
+    careers_url: "https://jobs.lever.co/acme"
+`, 'utf-8');
+
   const validResult = run(NODE, ['validate-portals.mjs', '--file', validPath]);
   if (validResult !== null && validResult.includes('0 errors')) {
     pass('validate-portals accepts a minimal valid portals file');
@@ -4573,6 +4603,20 @@ tracked_companies:
     pass('validate-portals rejects invalid visa_filter (empty keyword / non-boolean require_mention)');
   } else {
     fail('validate-portals should reject invalid visa_filter');
+  }
+
+  const typoTitleFilterFullResult = run(NODE, ['validate-portals.mjs', '--file', typoTitleFilterFullPath]);
+  if (typoTitleFilterFullResult === null) {
+    pass('validate-portals rejects a misspelled title_filter_full field');
+  } else {
+    fail('validate-portals should reject a misspelled title_filter_full field');
+  }
+
+  const emptyTitleFilterFullResult = run(NODE, ['validate-portals.mjs', '--file', emptyTitleFilterFullPath]);
+  if (emptyTitleFilterFullResult !== null && emptyTitleFilterFullResult.includes('0 errors')) {
+    pass('validate-portals accepts an explicitly empty title_filter_full.positive');
+  } else {
+    fail('validate-portals should accept an explicitly empty title_filter_full.positive');
   }
 
   rmSync(tmp, { recursive: true, force: true });

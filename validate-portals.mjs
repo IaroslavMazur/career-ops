@@ -116,6 +116,8 @@ async function loadProviderIds() {
   return ids;
 }
 
+const TITLE_FILTER_FIELDS = ['positive', 'negative', 'seniority_boost'];
+
 export async function validatePortalsConfig(config, { providerIds = new Set() } = {}) {
   const errors = [];
   const warnings = [];
@@ -143,6 +145,17 @@ export async function validatePortalsConfig(config, { providerIds = new Set() } 
     if (!isObject(config.title_filter_full)) {
       add(errors, 'title_filter_full', 'title_filter_full must be an object');
     } else {
+      // A misspelled field is the dangerous case, not a missing one:
+      // `positve:` leaves `positive` undefined, buildTitleFilter treats an
+      // empty positive list as "no positive constraint", and the sweep then
+      // matches every title on every board — the exact outcome this key
+      // exists to prevent. An unknown field is therefore an error, while
+      // `positive: []` stays valid as a deliberate choice.
+      for (const key of Object.keys(config.title_filter_full)) {
+        if (!TITLE_FILTER_FIELDS.includes(key)) {
+          add(errors, `title_filter_full.${key}`, `unknown title_filter_full field - expected one of ${TITLE_FILTER_FIELDS.join(', ')}`);
+        }
+      }
       validateKeywordList(config.title_filter_full.positive, 'title_filter_full.positive', errors);
       validateKeywordList(config.title_filter_full.negative, 'title_filter_full.negative', errors);
       validateKeywordList(config.title_filter_full.seniority_boost, 'title_filter_full.seniority_boost', errors);
