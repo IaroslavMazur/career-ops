@@ -97,14 +97,31 @@ const CONCURRENCY = 10;
 
 // ── Title filter ────────────────────────────────────────────────────
 
-// Compile a lowercased keyword into a matcher. Short all-letter acronyms
-// (2-3 chars: cfo, coo, sdr, bdr, gsi…) match on WORD BOUNDARIES so "COO" no
-// longer matches "Coordinator", "SDR" no longer matches anything mid-word, etc.
-// Multi-word phrases and keywords containing non-letters (".NET", "SAP ",
-// "L&D") keep fast, permissive substring matching.
+// Compile a lowercased keyword into a matcher. Any keyword that BEGINS and
+// ENDS with a word character matches on WORD BOUNDARIES: "COO" no longer
+// matches "Coordinator" (#1101), and by the same rule "Rust Engineer" no
+// longer matches "Zero Trust Engineer", "DeFi" no longer matches "Software
+// Defined Networking", "Solana" no longer matches "Genomic Breeder
+// (Solanaceae)", and "Fuel" no longer matches "Diesel Mechanic
+// Assistant/Fueler". Length was never the property that made a substring
+// match wrong - being a word was.
+//
+// A trailing plural is still accepted, because a keyword is written in the
+// singular and boards post both: "Smart Contract" has to keep matching
+// "Senior Software Engineer, Blockchain (Smart Contracts)". Anchoring
+// without this exception silently drops real roles, which is a worse failure
+// than the false positives it fixes (see #2544 on silent title drops).
+//
+// Keywords containing non-word characters at either end (".NET", "SAP ",
+// "ink!", "C++", "L&D") keep permissive substring matching: \b is defined
+// against word characters, so anchoring "c++" would demand a word character
+// after "+" and the keyword would never match anything.
+const WORD_EDGED = /^\w[\s\S]*\w$|^\w$/;
+const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+
 export function compileKeyword(kw) {
-  if (/^[a-z]{2,3}$/.test(kw)) {
-    const re = new RegExp(`\\b${kw}\\b`);
+  if (WORD_EDGED.test(kw)) {
+    const re = new RegExp(`\\b${kw.replace(REGEX_SPECIAL, '\\$&')}(?:e?s)?\\b`);
     return (lower) => re.test(lower);
   }
   return (lower) => lower.includes(kw);
