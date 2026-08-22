@@ -57,11 +57,19 @@ if (matching > 0 && matching < corpus.titles.length) {
   fail(`corpus is degenerate: ${matching}/${corpus.titles.length} match — it can no longer detect a matcher change`);
 }
 
-// 3. The specific bleeds named in #3103, and the recall case that decided #2970.
-//    These are in the corpus above, but pinned by name here so a failure says which
-//    documented behaviour broke rather than just "a title drifted".
+// 3. The specific bleeds named in #3103, and the recall case that decided #2970,
+//    pinned by name so a failure says which documented behaviour broke rather than
+//    just "a title drifted".
+//
+//    Most are real corpus entries. Two are synthetic controls, marked `synthetic`
+//    below: each is the positive half of a pair whose negative half IS observed
+//    ("Astar Network Rust Engineer" against the NASTAR titles, "Senior C++ Engineer"
+//    for the non-word-edge rule), and neither has turned up on a board yet.
+//    Assertion 4 checks the marking against the fixture, so the distinction cannot
+//    rot into a comment that says one thing while the data says another.
+const SYNTHETIC = 'synthetic';
 const CASES = [
-  // [keyword, title, expected, why]
+  // [keyword, title, expected, why, origin?]
   ['Solana', 'Genomic Breeder (Solanaceae)', true, '#3103: unanchored by default, still a substring'],
   ['word:Solana', 'Genomic Breeder (Solanaceae)', false, '#2970: word: closes it'],
   ['word:Solana', 'Senior Solana Engineer', true, 'word: keeps the real match'],
@@ -70,8 +78,8 @@ const CASES = [
   ['word:DeFi + Engineer', 'Senior Systems Engineer, Product Definition', false, 'word: composes inside an AND-group'],
   ['DeFi + Engineer', 'Senior Systems Engineer, Product Definition', true, 'control: unprefixed AND-group still bleeds'],
   ['word:Astar', 'NASTAR/Events Crew - Winter 26-27', false, 'observed 2026-08-22: Astar inside NASTAR'],
-  ['word:Astar', 'Astar Network Rust Engineer', true, 'and the real one survives'],
-  ['C++', 'Senior C++ Engineer', true, 'non-word edges keep substring matching — \\b could never match here'],
+  ['word:Astar', 'Astar Network Rust Engineer', true, 'and the real one survives', SYNTHETIC],
+  ['C++', 'Senior C++ Engineer', true, 'non-word edges keep substring matching — \\b could never match here', SYNTHETIC],
 ];
 let ok = 0;
 for (const [kw, title, want, why] of CASES) {
@@ -81,3 +89,18 @@ for (const [kw, title, want, why] of CASES) {
   }
 }
 if (ok === CASES.length) pass(`${CASES.length} documented matching cases from #3103 / #2970 hold`);
+
+// 4. Keep the `synthetic` marking honest. A case marked synthetic that later shows
+//    up on a board should lose the marking; an unmarked case must be a real observed
+//    title, or the comment above is lying about where the evidence comes from.
+const corpusTitles = new Set(corpus.titles.map(t => t.title));
+const mismarked = CASES
+  .map(([, title, , , origin]) => ({ title, synthetic: origin === SYNTHETIC, observed: corpusTitles.has(title) }))
+  .filter(c => c.synthetic === c.observed);
+if (mismarked.length === 0) {
+  pass('every pinned case is marked synthetic if and only if it is absent from the corpus');
+} else {
+  fail('pinned cases mismarked:\n' + mismarked
+    .map(c => `    ${c.observed ? 'marked synthetic but IS in the corpus' : 'unmarked but NOT in the corpus'}: ${c.title}`)
+    .join('\n'));
+}
