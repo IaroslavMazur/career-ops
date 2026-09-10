@@ -14,6 +14,7 @@
 //      admitting Deficiência, Defiance, Software Defined and Product Definition
 //      — the 25-of-28 junk majority the gate exists to remove. The junk cases
 //      below are what tells the two apart.
+import { readFileSync } from 'node:fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { pass, fail, ROOT } from './helpers.mjs';
@@ -21,7 +22,7 @@ import { pass, fail, ROOT } from './helpers.mjs';
 console.log('\nscan-ats-full — domain_filter board gate');
 
 const { buildDomainFilter, buildTitleFilter } = await import(pathToFileURL(join(ROOT, 'title-keywords.mjs')).href);
-const { boardInDomain } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
+const { boardInDomain, boardGateDecision } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
 
 const check = (cond, msg) => (cond ? pass(msg) : fail(msg));
 
@@ -128,4 +129,82 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   } catch (err) {
     fail(`boardInDomain threw on malformed jobs: ${err.message}`);
   }
+}
+
+// ── 5. Truncation: the one board the gate must NOT decide ───────────
+//
+// The two-board case @artemtrofymenko and @Scott-Emberson converged on (#3304).
+// The first board is the property this feature exists for; the second is the
+// one that made the original placement wrong, and it is the reason this suite
+// asserts a THREE-valued decision rather than a boolean. A test written around
+// the old ordering would have pinned the defect: it would redden on the fix.
+{
+  const match = buildDomainFilter(['defi', 'crypto']);
+
+  // (a) Complete board, nothing domain-bearing → gated, ahead of any title work.
+  const complete = [{ title: 'Office Manager' }, { title: 'Executive Assistant' }];
+  check(boardGateDecision(complete, match) === 'gate', 'a complete board with no domain posting is gated');
+
+  // (b) The same rows, but the provider said the response was cut short. The
+  // only domain-bearing posting can sit in exactly the tail the sequential
+  // retry is about to fetch, so this board is NOT evidence of anything yet.
+  const truncated = Object.assign([...complete], { workdayTruncated: true });
+  check(boardGateDecision(truncated, match) === 'defer', 'a truncated board with no domain posting is deferred, not gated');
+
+  // And the deferral is not academic: the fuller result inverts the verdict.
+  const full = [...complete, { title: 'DeFi Protocol Engineer' }];
+  check(boardGateDecision(full, match) === 'process', 'the fuller retry result admits the board the truncated page would have dropped');
+
+  // (c) A truncated board that ALREADY matches needs no deferral — the retry
+  // returns a superset, so the verdict cannot change, and processing the
+  // partial page banks those matches even if the retry later fails.
+  const truncatedMatch = Object.assign([...full], { workdayTruncated: true });
+  check(boardGateDecision(truncatedMatch, match) === 'process', 'a truncated board that already matches is processed, not deferred');
+
+  // (d) Opt-out is still opt-out: with no filter nothing is gated or deferred,
+  // truncated or not, or every existing portals.yml changes behaviour.
+  check(boardGateDecision(complete, null) === 'process', 'no domain_filter: a complete board is processed');
+  check(boardGateDecision(truncated, null) === 'process', 'no domain_filter: a truncated board is processed, never deferred');
+}
+
+// ── 6. Deleting the feature must redden this suite ──────────────────
+//
+// Measured on 93b8bde5: removing the gate's early-return block left 97
+// assertions green across four suites, because every one of them exercised the
+// primitive and none the decision. `boardGateDecision` is what the call site
+// now branches on, so a gate deleted from the sweep can no longer pass here
+// with the predicate left intact.
+{
+  const match = buildDomainFilter(['solana']);
+  const junkBoard = [{ title: 'Office Manager' }];
+  const alwaysProcess = boardGateDecision(junkBoard, match) === 'process';
+  check(!alwaysProcess, 'the decision is not a stub that always processes');
+  check(typeof boardGateDecision === 'function', 'the sweep decides through an exported, testable function');
+}
+
+// ── 7. Placement, which is this PR's headline and the part a unit test
+//      cannot reach ──────────────────────────────────────────────────
+//
+// The sweep lives inside main() and reaches the network through a provider, so
+// nothing short of a subprocess with a stubbed ATS exercises the call site
+// itself: with the block deleted, sections 1-6 stay green. A source-order guard
+// is the cheap half of that, and it is the half that reddens on deletion —
+// the same layout-guard idiom the suite already uses elsewhere. It asserts the
+// three orderings the feature's claims rest on, not the code that implements
+// them.
+{
+  const src = readFileSync(join(ROOT, 'scan-ats-full.mjs'), 'utf8');
+  const sweep = src.slice(src.indexOf('const truncated = []'), src.indexOf('Second chance for boards'));
+  const at = needle => sweep.indexOf(needle);
+
+  const queue = at('truncated.push(entry)');
+  const gate = at('boardGateDecision(jobs, domainFilter)');
+  const process_ = at('await processJobs(');
+
+  check(gate !== -1, 'the sweep decides the board through boardGateDecision');
+  // The bug this section exists for: the gate returned before the retry queue,
+  // so a truncated board was judged on a page nobody claimed was complete.
+  check(queue !== -1 && queue < gate, 'a truncated board is queued for the retry BEFORE the gate can drop it');
+  // The headline: no title is filtered on a board that failed the gate.
+  check(process_ !== -1 && gate < process_, 'the gate runs ahead of processJobs, not after it');
 }

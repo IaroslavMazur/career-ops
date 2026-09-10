@@ -492,11 +492,45 @@ export function resolveTitleFilterConfig(config) {
 // board is simply not an employer. There the gate degrades to today's
 // behaviour, which is a bounded failure and one of the reasons the whole
 // feature is opt-in.
-//
-// A truncated board is judged on the part that was fetched, like every other
-// gate here: the sweep can only read what the provider returned.
 export function boardInDomain(jobs, domainFilter) {
   return jobs.some(job => job?.title && domainFilter(job.title));
+}
+
+/**
+ * Decide what the sweep does with one fetched board, before any title is read.
+ *
+ * Split out from the call site because the truncation rule is the whole point
+ * and an inline `if` hid it: an earlier revision gated a `workdayTruncated`
+ * response on the part that was fetched, "like every other gate here". That
+ * reasoning is wrong for exactly this gate. Every other filter here judges a
+ * posting it has in hand, so a short response costs it the rows it never saw;
+ * this one judges the BOARD from its rows, so a short response can invert the
+ * verdict — the only domain-bearing posting may sit in the tail the sequential
+ * retry is about to fetch, and the board is then dropped into a counter that
+ * reads as "correctly excluded" rather than "not yet known".
+ *
+ * So an unmatched truncated board is deferred, not gated: it stays queued for
+ * the retry and the fuller result decides it. A truncated board that ALREADY
+ * matches needs no deferral — the retry returns a superset, so the verdict
+ * cannot change — and processing its partial page keeps today's behaviour of
+ * banking those matches even if the retry later fails.
+ *
+ * Reachability, since the obvious objection is that a truncated page might be
+ * a ranked prefix and so already carry any domain-bearing posting: it is not.
+ * `workdayTruncated` is set on `fetch-error` (retries exhausted MID-pagination
+ * while other tenants hammered the same uplink), on `splitIncomplete` and on
+ * `budgetExhausted` — see providers/workday.mjs. The cut is wherever the error
+ * or the budget landed, which bears no relation to posting order, so no
+ * ordering argument makes the deferral unnecessary.
+ *
+ * @param {object[]} jobs - Postings as returned by the provider.
+ * @param {((title: string) => boolean)|null} domainFilter - Compiled gate, or null when opt-out.
+ * @returns {'process'|'gate'|'defer'} What the caller should do with the board.
+ */
+export function boardGateDecision(jobs, domainFilter) {
+  if (!domainFilter) return 'process';
+  if (boardInDomain(jobs, domainFilter)) return 'process';
+  return jobs.workdayTruncated ? 'defer' : 'gate';
 }
 
 // Title/location/content filter chain for one posting, used by runSeedScan().
@@ -995,19 +1029,27 @@ async function main() {
           const jobs = await source.provider.fetch(entry, ctx);
           recordBoardResult(deadBoards, name, deadBoard, 200);
           consecutiveResolverFailures = 0;
-          // Deliberately ahead of the truncation retry and of processJobs: a
-          // gated board is not merely quieter but CHEAPER, since provider
-          // .enrichDate() issues a per-job detail request for undated providers
-          // (icims) and a board dropped here never pays for one. It also means
-          // a gated board is never queued for the sequential retry — nothing
-          // downstream would have kept its postings anyway.
-          if (domainFilter && !boardInDomain(jobs, domainFilter)) {
+          // Queued BEFORE the gate, deliberately: a board the gate cannot yet
+          // judge has to stay in the retry list, and the gate below is what
+          // decides whether it was ever eligible.
+          if (jobs.workdayTruncated) truncated.push(entry);
+          // Ahead of processJobs, deliberately: a gated board is not merely
+          // quieter but CHEAPER, since provider.enrichDate() issues a per-job
+          // detail request for undated providers (icims) and a board dropped
+          // here never pays for one. The one board that does not get decided
+          // here is the truncated one — see boardGateDecision.
+          const decision = boardGateDecision(jobs, domainFilter);
+          if (decision === 'gate') {
             domainGatedBoards++;
             domainGatedPostings += jobs.length;
             if (opts.verbose) console.error(`  ⊘ ${name}/${entry.name}: no domain-bearing posting — board skipped`);
             return;
           }
-          if (jobs.workdayTruncated) truncated.push(entry);
+          // Deferred: the retry below re-fetches the whole board and gates
+          // THAT. Its partial page is not processed here — those rows would
+          // bypass a gate that has not been decided yet, which is the loose
+          // direction this feature exists to close.
+          if (decision === 'defer') return;
           if (jobs.icimsTruncated) {
             cappedBoards++;
             if (opts.verbose) console.error(`  ⚠ ${name}/${entry.name}: hit the page cap — later postings not scanned`);
@@ -1069,7 +1111,9 @@ async function main() {
     // quiet line. Re-processing the full board is safe — seenUrls already
     // holds every match from the partial first pass.
     // Skipped entirely under a resolver outage: retrying boards one by one is
-    // more of exactly the traffic the breaker just stopped.
+    // more of exactly the traffic the breaker just stopped. A board deferred by
+    // the gate is then neither processed nor counted, which is correct — the
+    // run is abandoned mid-source and its checkpoint resumes the whole slice.
     if (truncated.length && !resolverOutage) {
       log(`\n  ↻ retrying ${truncated.length} truncated board(s) sequentially...`);
       for (const entry of truncated) {
@@ -1077,7 +1121,17 @@ async function main() {
           await withTimeout((async () => {
             const jobs = await source.provider.fetch(entry, ctx);
             recordBoardResult(deadBoards, name, boardKey(entry), 200);
-            await processJobs(jobs, name, source.provider, entry.name);
+            // Where a board deferred by the parallel sweep is actually decided.
+            // Boards that already matched up there pass again (the retry returns
+            // a superset), so this costs them nothing, and the counters read the
+            // fuller result rather than the truncated page.
+            if (domainFilter && !boardInDomain(jobs, domainFilter)) {
+              domainGatedBoards++;
+              domainGatedPostings += jobs.length;
+              if (opts.verbose) console.error(`  ⊘ ${name}/${entry.name}: no domain-bearing posting — board skipped`);
+            } else {
+              await processJobs(jobs, name, source.provider, entry.name);
+            }
             if (jobs.workdayTruncated) {
               errors++; // still truncated on a quiet line — genuine board problem, move on
               if (opts.verbose) console.error(`  ✗ ${name}/${entry.name}: still truncated after sequential retry`);
