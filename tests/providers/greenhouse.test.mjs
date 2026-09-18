@@ -37,9 +37,9 @@ try {
   // job-boards[.eu] with the same slug, so an entry written in that form must
   // resolve instead of being silently skipped as "no provider matched".
   const legacyCases = [
-    ['https://boards.greenhouse.io/ritual', 'ritual'],
-    ['https://boards.greenhouse.io/openzeppelin/', 'openzeppelin'],
-    ['https://boards.greenhouse.io/fetchai/jobs/4012345', 'fetchai'],
+    ['https://boards.greenhouse.io/acme', 'acme'],
+    ['https://boards.greenhouse.io/exampleco/', 'exampleco'],
+    ['https://boards.greenhouse.io/bigco/jobs/4012345', 'bigco'],
     ['https://boards.eu.greenhouse.io/euco?gh_src=x', 'euco'],
     ['https://boards.greenhouse.io/embedded', 'embedded'],
   ];
