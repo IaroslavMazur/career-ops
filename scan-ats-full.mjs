@@ -511,9 +511,10 @@ export function boardInDomain(jobs, domainFilter) {
  *
  * So an unmatched truncated board is deferred, not gated: it stays queued for
  * the retry and the fuller result decides it. A truncated board that ALREADY
- * matches needs no deferral — the retry returns a superset, so the verdict
- * cannot change — and processing its partial page keeps today's behaviour of
- * banking those matches even if the retry later fails.
+ * matches needs no deferral — a domain-bearing posting in hand settles the
+ * verdict whatever the retry returns — and processing its partial page keeps
+ * today's behaviour of banking those matches even if the retry later fails.
+ * What the retry then does with each kind is retryGateDecision's job.
  *
  * Reachability, since the obvious objection is that a truncated page might be
  * a ranked prefix and so already carry any domain-bearing posting: it is not.
@@ -531,6 +532,38 @@ export function boardGateDecision(jobs, domainFilter) {
   if (!domainFilter) return 'process';
   if (boardInDomain(jobs, domainFilter)) return 'process';
   return jobs.workdayTruncated ? 'defer' : 'gate';
+}
+
+/**
+ * Decide what the sequential retry does with a board the sweep queued.
+ *
+ * The retry is where a deferred board gets its verdict, so it needs the same
+ * callable shape as the sweep, plus the one fact only the sweep knows: whether
+ * the board was deferred or already admitted. Two cases hinge on that:
+ *
+ *   1. Already admitted (its truncated page matched). The retry cannot take
+ *      that back: the retry can come back truncated too, cut somewhere else,
+ *      so "the retry returns a superset" does not hold, and a cut that misses
+ *      the domain posting would count a board whose matches are already banked
+ *      as gated. It is processed, whatever the retry shows.
+ *   2. Deferred, and the retry is truncated AGAIN with nothing domain-bearing.
+ *      There is no third fetch to defer to, and the gated counter means
+ *      "correctly excluded", which an incomplete page cannot establish. The
+ *      board is admitted ungated, the same fallback the gate takes whenever it
+ *      cannot judge a board (see the aggregator note on boardInDomain); the
+ *      caller still counts it as an error for staying truncated.
+ *
+ * Only a deferred board whose retry is complete and carries nothing
+ * domain-bearing is gated.
+ *
+ * @param {object[]} jobs - Postings from the retry fetch.
+ * @param {((title: string) => boolean)|null} domainFilter - Compiled gate, or null when opt-out.
+ * @param {boolean} wasDeferred - Whether the sweep deferred this board rather than processing it.
+ * @returns {'process'|'gate'} What the caller should do with the board.
+ */
+export function retryGateDecision(jobs, domainFilter, wasDeferred) {
+  if (!wasDeferred) return 'process';
+  return boardGateDecision(jobs, domainFilter) === 'gate' ? 'gate' : 'process';
 }
 
 // Title/location/content filter chain for one posting, used by runSeedScan().
@@ -1015,6 +1048,9 @@ async function main() {
     let lastDone = 0;
     let lastResumeAt = 0;
     const truncated = [];
+    // The subset of `truncated` the gate deferred rather than admitted; the
+    // retry needs to know which, see retryGateDecision.
+    const deferred = new Set();
     await parallelEach(entries, source.concurrency ?? CONCURRENCY, async (entry) => {
       const deadBoard = boardKey(entry);
       if (shouldSkipDeadBoard(deadBoards, name, deadBoard)) {
@@ -1049,7 +1085,10 @@ async function main() {
           // THAT. Its partial page is not processed here — those rows would
           // bypass a gate that has not been decided yet, which is the loose
           // direction this feature exists to close.
-          if (decision === 'defer') return;
+          if (decision === 'defer') {
+            deferred.add(entry);
+            return;
+          }
           if (jobs.icimsTruncated) {
             cappedBoards++;
             if (opts.verbose) console.error(`  ⚠ ${name}/${entry.name}: hit the page cap — later postings not scanned`);
@@ -1122,10 +1161,9 @@ async function main() {
             const jobs = await source.provider.fetch(entry, ctx);
             recordBoardResult(deadBoards, name, boardKey(entry), 200);
             // Where a board deferred by the parallel sweep is actually decided.
-            // Boards that already matched up there pass again (the retry returns
-            // a superset), so this costs them nothing, and the counters read the
-            // fuller result rather than the truncated page.
-            if (domainFilter && !boardInDomain(jobs, domainFilter)) {
+            // A board the sweep already admitted is never gated here, and one
+            // still truncated is admitted rather than counted as gated.
+            if (retryGateDecision(jobs, domainFilter, deferred.has(entry)) === 'gate') {
               domainGatedBoards++;
               domainGatedPostings += jobs.length;
               if (opts.verbose) console.error(`  ⊘ ${name}/${entry.name}: no domain-bearing posting — board skipped`);

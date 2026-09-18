@@ -22,7 +22,7 @@ import { pass, fail, ROOT } from './helpers.mjs';
 console.log('\nscan-ats-full — domain_filter board gate');
 
 const { buildDomainFilter, buildTitleFilter } = await import(pathToFileURL(join(ROOT, 'title-keywords.mjs')).href);
-const { boardInDomain, boardGateDecision } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
+const { boardInDomain, boardGateDecision, retryGateDecision } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
 
 const check = (cond, msg) => (cond ? pass(msg) : fail(msg));
 
@@ -167,6 +167,30 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   check(boardGateDecision(truncated, null) === 'process', 'no domain_filter: a truncated board is processed, never deferred');
 }
 
+// ── 5b. The retry, where a deferred board is actually decided ───────
+//
+// Raised by @artemtrofymenko and CodeRabbit on c15995ee (#3304): the retry
+// judged every queued board with an inline check, so a retry truncated a
+// second time was counted as gated, and so was a board the sweep had already
+// admitted if the retry's cut missed its domain posting.
+{
+  const match = buildDomainFilter(['defi', 'crypto']);
+  const junk = [{ title: 'Office Manager' }];
+  const junkTruncated = Object.assign([...junk], { workdayTruncated: true });
+  const inDomain = [...junk, { title: 'DeFi Protocol Engineer' }];
+
+  // Deferred: the fuller result decides.
+  check(retryGateDecision(junk, match, true) === 'gate', 'retry: a deferred board with a complete, off-domain result is gated');
+  check(retryGateDecision(inDomain, match, true) === 'process', 'retry: a deferred board whose fuller result matches is processed');
+  // Deferred and truncated again: no third fetch, so not "correctly excluded".
+  check(retryGateDecision(junkTruncated, match, true) === 'process', 'retry: a deferred board truncated again is admitted, never counted as gated');
+  // Admitted by the sweep: a retry cut elsewhere cannot un-admit it.
+  check(retryGateDecision(junkTruncated, match, false) === 'process', 'retry: a board the sweep admitted is not gated by a re-truncated retry');
+  check(retryGateDecision(junk, match, false) === 'process', 'retry: a board the sweep admitted is not re-judged at all');
+  // Opt-out stays opt-out.
+  check(retryGateDecision(junk, null, true) === 'process', 'retry: no domain_filter, nothing gated');
+}
+
 // ── 6. Deleting the feature must redden this suite ──────────────────
 //
 // Measured on 93b8bde5: removing the gate's early-return block left 97
@@ -207,4 +231,16 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   check(queue !== -1 && queue < gate, 'a truncated board is queued for the retry BEFORE the gate can drop it');
   // The headline: no title is filtered on a board that failed the gate.
   check(process_ !== -1 && gate < process_, 'the gate runs ahead of processJobs, not after it');
+  // The sweep records which boards it deferred; without that the retry cannot
+  // tell a deferred board from an admitted one.
+  check(at("deferred.add(entry)") !== -1, 'the sweep records the boards it deferred');
+
+  // The retry is the other call site, and the one @artemtrofymenko's `if (false)`
+  // mutation showed no test read.
+  const retry = src.slice(src.indexOf('Second chance for boards'), src.indexOf('totalErrors += errors'));
+  const rGate = retry.indexOf('retryGateDecision(jobs, domainFilter, deferred.has(entry))');
+  const rProcess = retry.indexOf('await processJobs(');
+  check(rGate !== -1, 'the retry decides the board through retryGateDecision');
+  check(rProcess !== -1 && rGate < rProcess, 'the retry gate runs ahead of processJobs');
+  check(!/boardInDomain\(/.test(retry), 'the retry no longer judges a board with an inline boardInDomain check');
 }
