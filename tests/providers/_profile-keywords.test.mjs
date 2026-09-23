@@ -1,8 +1,8 @@
 // tests/providers/_profile-keywords.test.mjs
-import { writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { writeFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { pass, fail, ROOT } from '../helpers.mjs';
+import { pass, fail, ROOT, rmSync } from '../helpers.mjs';
 import { pathToFileURL } from 'url';
 
 console.log('\nProvider helper — _profile-keywords');
