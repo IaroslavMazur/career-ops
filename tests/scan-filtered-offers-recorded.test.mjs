@@ -22,7 +22,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
-import { collectSeenUrls, collectSeenCompanyRoles } from '../scan.mjs';
+import { collectSeenUrls, collectSeenCompanyRoles, unrecordedOffers } from '../scan.mjs';
 
 console.log('\nscan.mjs — location- and age-filtered offers are recorded in scan-history.tsv');
 
@@ -139,6 +139,49 @@ const BLOCKED = 'https://boards.example.com/fixture/2002';
     fail(`scan over the location fixture failed: ${err.message}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// 1b. A second scan over the same board records nothing new. The cut runs
+// before dedup and its rows pin nothing, so without a guard every scan
+// appended the same skipped_location row again.
+{
+  const { dir, portals } = makeLane();
+  try {
+    runScan(dir, portals);
+    runScan(dir, portals);
+    const blockedRows = historyRows(dir).filter((r) => r.url === BLOCKED);
+    if (blockedRows.length === 1 && blockedRows[0].status === 'skipped_location') {
+      pass('a second scan does not record the same location-filtered posting again');
+    } else {
+      fail(`after two scans the blocked posting has ${blockedRows.length} row(s): ${JSON.stringify(blockedRows.map((r) => r.status))}`);
+    }
+  } catch (err) {
+    fail(`repeated scan over the location fixture failed: ${err.message}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// 1c. unrecordedOffers: one row per URL and status, nothing more.
+{
+  const header = 'url\tfirst_seen\tportal\ttitle\tcompany\tstatus\n';
+  const history = header + [
+    'https://a.example.com/1\t2026-09-01\tp\tRole\tCo\tskipped_location',
+    'https://a.example.com/2\t2026-09-01\tp\tRole\tCo\tadded',
+  ].join('\n');
+  const offers = [
+    { url: 'https://a.example.com/1' }, // already recorded with this status
+    { url: 'https://a.example.com/2' }, // recorded, but under another status
+    { url: 'https://a.example.com/3' }, // new
+    { url: 'https://a.example.com/3/' }, // the same posting listed twice in one scan
+  ];
+  const kept = unrecordedOffers(offers, 'skipped_location', history).map((o) => o.url);
+  const want = ['https://a.example.com/2', 'https://a.example.com/3'];
+  if (JSON.stringify(kept) === JSON.stringify(want)) {
+    pass('unrecordedOffers keeps a new URL or a changed verdict, once per scan');
+  } else {
+    fail(`unrecordedOffers kept ${JSON.stringify(kept)}, want ${JSON.stringify(want)}`);
   }
 }
 
