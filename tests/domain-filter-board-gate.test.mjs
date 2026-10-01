@@ -23,6 +23,7 @@ console.log('\nscan-ats-full — domain_filter board gate');
 
 const { buildDomainFilter, buildTitleFilter } = await import(pathToFileURL(join(ROOT, 'title-keywords.mjs')).href);
 const { boardInDomain, boardGateDecision, retryGateDecision } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
+const { WORKDAY_TRUNCATED_REASON } = await import(pathToFileURL(join(ROOT, 'providers', 'workday.mjs')).href);
 
 const check = (cond, msg) => (cond ? pass(msg) : fail(msg));
 
@@ -148,8 +149,15 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   // (b) The same rows, but the provider said the response was cut short. The
   // only domain-bearing posting can sit in exactly the tail the sequential
   // retry is about to fetch, so this board is NOT evidence of anything yet.
-  const truncated = Object.assign([...complete], { workdayTruncated: true });
+  const truncated = Object.assign([...complete], { workdayTruncated: WORKDAY_TRUNCATED_REASON.TRANSIENT });
   check(boardGateDecision(truncated, match) === 'defer', 'a truncated board with no domain posting is deferred, not gated');
+
+  // (b2) A STRUCTURAL cut is never retried (a repeat run hits the same bound),
+  // so deferring it would drop the board for good. With no fuller fetch to
+  // wait for, it is admitted ungated, as the retry admits a board truncated
+  // twice.
+  const structural = Object.assign([...complete], { workdayTruncated: WORKDAY_TRUNCATED_REASON.STRUCTURAL });
+  check(boardGateDecision(structural, match) === 'process', 'a structurally truncated board is admitted ungated, not deferred to a retry that never runs');
 
   // And the deferral is not academic: the fuller result inverts the verdict.
   const full = [...complete, { title: 'DeFi Protocol Engineer' }];
@@ -158,13 +166,20 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   // (c) A truncated board that ALREADY matches needs no deferral — the retry
   // returns a superset, so the verdict cannot change, and processing the
   // partial page banks those matches even if the retry later fails.
-  const truncatedMatch = Object.assign([...full], { workdayTruncated: true });
+  const truncatedMatch = Object.assign([...full], { workdayTruncated: WORKDAY_TRUNCATED_REASON.TRANSIENT });
   check(boardGateDecision(truncatedMatch, match) === 'process', 'a truncated board that already matches is processed, not deferred');
 
   // (d) Opt-out is still opt-out: with no filter nothing is gated or deferred,
   // truncated or not, or every existing portals.yml changes behaviour.
   check(boardGateDecision(complete, null) === 'process', 'no domain_filter: a complete board is processed');
   check(boardGateDecision(truncated, null) === 'process', 'no domain_filter: a truncated board is processed, never deferred');
+}
+
+// ── 5a. Diacritics fold on both sides, as the title filter does (#4458) ──
+{
+  const match = buildDomainFilter(['defi', 'blockchain']);
+  check(match('Ingénieur DéFi Senior') === true, 'an accented posting matches an unaccented domain keyword');
+  check(buildDomainFilter(['défi'])('DeFi Protocol Engineer') === true, 'an accented domain keyword matches an unaccented posting');
 }
 
 // ── 5b. The retry, where a deferred board is actually decided ───────
@@ -176,7 +191,7 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
 {
   const match = buildDomainFilter(['defi', 'crypto']);
   const junk = [{ title: 'Office Manager' }];
-  const junkTruncated = Object.assign([...junk], { workdayTruncated: true });
+  const junkTruncated = Object.assign([...junk], { workdayTruncated: WORKDAY_TRUNCATED_REASON.TRANSIENT });
   const inDomain = [...junk, { title: 'DeFi Protocol Engineer' }];
 
   // Deferred: the fuller result decides.

@@ -296,7 +296,8 @@ export function buildDomainFilter(domainKeywords) {
   const matchers = normalizeKeywords(domainKeywords, compileDomainKeyword);
   if (matchers.length === 0) return null;
   return (title) => {
-    const lower = String(title ?? '').toLowerCase();
+    // Folded like the keywords, so an accented posting still matches (#4458).
+    const lower = foldAccents(String(title ?? '').toLowerCase());
     return matchers.some(m => m(lower));
   };
 }

@@ -574,7 +574,11 @@ export function boardInDomain(jobs, domainFilter) {
 export function boardGateDecision(jobs, domainFilter) {
   if (!domainFilter) return 'process';
   if (boardInDomain(jobs, domainFilter)) return 'process';
-  return jobs.workdayTruncated ? 'defer' : 'gate';
+  if (!jobs.workdayTruncated) return 'gate';
+  // Only a transient cut is retried. A structural one comes back cut at the
+  // same bound, so there is no fuller fetch to defer to: the board is admitted
+  // ungated now, as the retry admits a board truncated twice.
+  return jobs.workdayTruncated === WORKDAY_TRUNCATED_REASON.TRANSIENT ? 'defer' : 'process';
 }
 
 /**
