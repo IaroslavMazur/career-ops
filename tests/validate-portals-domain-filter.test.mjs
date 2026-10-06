@@ -48,6 +48,17 @@ domain_filter:
   - ""
 `);
 
+  // A bare prefix is nonblank, so the emptiness check misses it, but it
+  // compiles to a term that never matches: the gate stays on and drops every
+  // complete board. Inside an AND-group the whole entry can never match.
+  const barePrefixes = ['word:', 'stem:  ', 'solana + word:'].map((kw, i) => write(`bare-${i}.yml`, `
+title_filter:
+  positive: ["AI Engineer"]
+domain_filter:
+  - "solana"
+  - "${kw}"
+`));
+
   const valid = write('valid.yml', `
 title_filter:
   positive: ["AI Engineer"]
@@ -69,6 +80,11 @@ title_filter:
 
   if (run(NODE, ['validate-portals.mjs', '--file', badEntry]) === null) pass('validate-portals rejects a non-string / empty domain_filter entry');
   else fail('validate-portals should reject a non-string / empty domain_filter entry');
+
+  for (const [i, file] of barePrefixes.entries()) {
+    if (run(NODE, ['validate-portals.mjs', '--file', file]) === null) pass(`validate-portals rejects a word:/stem: prefix with no term (case ${i})`);
+    else fail(`validate-portals should reject a word:/stem: prefix with no term (case ${i})`);
+  }
 
   const validOut = run(NODE, ['validate-portals.mjs', '--file', valid]);
   if (validOut !== null && validOut.includes('0 errors')) pass('validate-portals accepts a prefixed domain_filter list');

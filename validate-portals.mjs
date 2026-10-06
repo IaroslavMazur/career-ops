@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import * as yaml from 'js-yaml';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
+import { AND_SEPARATOR, STEM_PREFIX, WORD_PREFIX } from './title-keywords.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PROVIDERS_DIR = join(ROOT, 'providers');
@@ -232,6 +233,18 @@ export async function validatePortalsConfig(config, { providerIds = new Set() } 
       add(errors, 'domain_filter', 'domain_filter must be a list of keywords');
     } else {
       validateKeywordList(config.domain_filter, 'domain_filter', errors);
+      // A bare `word:` or `stem:` is nonblank, so the check above passes it,
+      // but it compiles to a term that never matches: the gate stays on and
+      // drops every complete board. Checked per AND-group term too, since
+      // `solana + word:` can never match either.
+      for (const [idx, item] of config.domain_filter.entries()) {
+        if (typeof item !== 'string') continue;
+        const terms = item.split(AND_SEPARATOR).map((t) => t.trim().toLowerCase());
+        const bare = (t) => [WORD_PREFIX, STEM_PREFIX].some((p) => t.startsWith(p) && t.slice(p.length).trim() === '');
+        if (terms.some(bare)) {
+          add(errors, `domain_filter[${idx}]`, 'a word:/stem: prefix needs a term after it');
+        }
+      }
     }
   }
 
