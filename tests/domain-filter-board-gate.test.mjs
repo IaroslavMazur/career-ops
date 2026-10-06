@@ -169,6 +169,12 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   const truncatedMatch = Object.assign([...full], { workdayTruncated: WORKDAY_TRUNCATED_REASON.TRANSIENT });
   check(boardGateDecision(truncatedMatch, match) === 'process', 'a truncated board that already matches is processed, not deferred');
 
+  // (c2) An iCIMS board stopped at the page cap is never retried, so the gate
+  // cannot judge it on the pages that fit under the cap: admitted ungated, the
+  // same fallback as a structural Workday cut. Raised by CodeRabbit on #3304.
+  const capped = Object.assign([...complete], { icimsTruncated: true });
+  check(boardGateDecision(capped, match) === 'process', 'a page-capped iCIMS board with no domain posting is admitted ungated, not gated');
+
   // (d) Opt-out is still opt-out: with no filter nothing is gated or deferred,
   // truncated or not, or every existing portals.yml changes behaviour.
   check(boardGateDecision(complete, null) === 'process', 'no domain_filter: a complete board is processed');
@@ -248,7 +254,7 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   check(process_ !== -1 && gate < process_, 'the gate runs ahead of processJobs, not after it');
   // The sweep records which boards it deferred; without that the retry cannot
   // tell a deferred board from an admitted one.
-  check(at("deferred.add(entry)") !== -1, 'the sweep records the boards it deferred');
+  check(at('deferred.set(entry, { index: startAt + idx, jobs })') !== -1, 'the sweep records the boards it deferred, with their index and partial page');
 
   // The retry is the other call site, and the one @artemtrofymenko's `if (false)`
   // mutation showed no test read.
@@ -258,4 +264,19 @@ check(!buildDomainFilter(['word:rwa'])('Software RWAs Team'), 'an explicit `word
   check(rGate !== -1, 'the retry decides the board through retryGateDecision');
   check(rProcess !== -1 && rGate < rProcess, 'the retry gate runs ahead of processJobs');
   check(!/boardInDomain\(/.test(retry), 'the retry no longer judges a board with an inline boardInDomain check');
+
+  // A failed retry fetch must not cost the deferred board the matches already
+  // in its partial page: the catch processes that page ungated.
+  const rCatch = retry.slice(retry.lastIndexOf('} catch (err) {'));
+  check(/const partial = deferred\.get\(entry\)\?\.jobs;\s*if \(partial\) await processJobs\(partial,/.test(rCatch),
+    'a failed retry processes the deferred board\'s partial page instead of dropping it');
+
+  // A deferred board finishes in the sweep, so a checkpoint can advance past it
+  // before the retry runs. Both checkpoint writes carry the deferred indices,
+  // and a resumed run queues the ones below its offset for the retry.
+  const writes = src.match(/current: \{ name, resumeAt: startAt \+ \w+, datasetLen: list\.length, datasetHash(, deferred: deferredIndices\(\))? \}/g) ?? [];
+  check(writes.length === 2 && writes.every((w) => w.includes('deferred: deferredIndices()')), 'the periodic and outage checkpoints both carry the deferred board indices');
+  check(/checkpoint\.current\.deferred[\s\S]{0,120}if \(index >= startAt/.test(sweep)
+    && /truncated\.push\(entriesAll\[index\]\);\s*deferred\.set\(entriesAll\[index\]/.test(sweep),
+  'a resumed run queues the checkpoint\'s deferred boards below its offset for the retry');
 }

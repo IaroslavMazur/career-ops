@@ -147,7 +147,9 @@ function validCheckpointCurrent(cur) {
   return typeof cur === 'object'
     && typeof cur.name === 'string'
     && Number.isInteger(cur.resumeAt) && cur.resumeAt >= 0
-    && Number.isInteger(cur.datasetLen) && cur.datasetLen >= 0;
+    && Number.isInteger(cur.datasetLen) && cur.datasetLen >= 0
+    && (cur.deferred === undefined
+      || (Array.isArray(cur.deferred) && cur.deferred.every((i) => Number.isInteger(i) && i >= 0)));
 }
 
 // A checkpoint written under different scan settings must not be resumed —
@@ -593,6 +595,10 @@ export function boardInDomain(jobs, domainFilter) {
 export function boardGateDecision(jobs, domainFilter) {
   if (!domainFilter) return 'process';
   if (boardInDomain(jobs, domainFilter)) return 'process';
+  // An iCIMS board stopped at the provider's page cap is never retried, so,
+  // like a structural Workday cut, it is admitted ungated rather than judged
+  // on the pages that happened to fit under the cap.
+  if (jobs.icimsTruncated) return 'process';
   if (!jobs.workdayTruncated) return 'gate';
   // Only a transient cut is retried. A structural one comes back cut at the
   // same bound, so there is no fuller fetch to defer to: the board is admitted
@@ -1348,9 +1354,20 @@ async function main() {
     let lastResumeAt = 0;
     const truncated = [];
     // The subset of `truncated` the gate deferred rather than admitted; the
-    // retry needs to know which, see retryGateDecision.
-    const deferred = new Set();
-    await parallelEach(entries, source.concurrency ?? CONCURRENCY, async (entry) => {
+    // retry needs to know which, see retryGateDecision. Each keeps its index in
+    // entriesAll, so a checkpoint can carry it past the resume offset, and its
+    // partial page, so a failed retry still has something to process.
+    const deferred = new Map();
+    // A board the interrupted run deferred sits below the resume offset, so
+    // the sweep never revisits it: it goes straight to the retry. Its partial
+    // page died with that run, so a failed retry has nothing to fall back to.
+    for (const index of checkpoint?.current?.name === name ? checkpoint.current.deferred ?? [] : []) {
+      if (index >= startAt || !entriesAll[index]) continue;
+      truncated.push(entriesAll[index]);
+      deferred.set(entriesAll[index], { index, jobs: null });
+    }
+    const deferredIndices = () => [...deferred.values()].map((d) => d.index);
+    await parallelEach(entries, source.concurrency ?? CONCURRENCY, async (entry, idx) => {
       const deadBoard = boardKey(entry);
       if (shouldSkipDeadBoard(deadBoards, name, deadBoard)) {
         deadBoardsSkipped++;
@@ -1386,9 +1403,10 @@ async function main() {
           // Deferred: the retry below re-fetches the whole board and gates
           // THAT. Its partial page is not processed here — those rows would
           // bypass a gate that has not been decided yet, which is the loose
-          // direction this feature exists to close.
+          // direction this feature exists to close. It is kept, though, for
+          // the case where the retry fetch fails outright.
           if (decision === 'defer') {
-            deferred.add(entry);
+            deferred.set(entry, { index: startAt + idx, jobs });
             return;
           }
           if (jobs.icimsTruncated) {
@@ -1430,7 +1448,7 @@ async function main() {
         saveDeadBoardsBestEffort(deadBoards);
         writeCheckpoint({
           ...checkpointBase(),
-          current: { name, resumeAt: startAt + resumeAt, datasetLen: list.length, datasetHash },
+          current: { name, resumeAt: startAt + resumeAt, datasetLen: list.length, datasetHash, deferred: deferredIndices() },
           counters: {
             ...snapshotCounters(),
             totalRetiredBoardsSkipped: totalRetiredBoardsSkipped + deadBoardsSkipped,
@@ -1454,8 +1472,8 @@ async function main() {
     // holds every match from the partial first pass.
     // Skipped entirely under a resolver outage: retrying boards one by one is
     // more of exactly the traffic the breaker just stopped. A board deferred by
-    // the gate is then neither processed nor counted, which is correct — the
-    // run is abandoned mid-source and its checkpoint resumes the whole slice.
+    // the gate is then neither processed nor counted here; the checkpoint
+    // carries its index, and the resumed run retries it.
     if (truncated.length && !resolverOutage) {
       log(`\n  ↻ retrying ${truncated.length} truncated board(s) sequentially...`);
       for (const entry of truncated) {
@@ -1490,6 +1508,12 @@ async function main() {
           errors++;
           recordBoardResult(deadBoards, name, boardKey(entry), err?.status);
           if (opts.verbose) console.error(`  ✗ ${name}/${entry.name} (retry): ${err.message}`);
+          // No fuller fetch is coming, so a deferred board's partial page is
+          // admitted ungated, the fallback the retry takes for a board that
+          // comes back truncated again. Without it, a title match already in
+          // hand would be lost to the retry's failure.
+          const partial = deferred.get(entry)?.jobs;
+          if (partial) await processJobs(partial, name, source.provider, entry.name);
         }
       }
     }
@@ -1517,7 +1541,7 @@ async function main() {
       if (!opts.dryRun) {
         checkpointWritten = writeCheckpoint({
           ...checkpointBase(),
-          current: { name, resumeAt: startAt + lastResumeAt, datasetLen: list.length, datasetHash },
+          current: { name, resumeAt: startAt + lastResumeAt, datasetLen: list.length, datasetHash, deferred: deferredIndices() },
           counters: snapshotCounters(),
         });
       }
