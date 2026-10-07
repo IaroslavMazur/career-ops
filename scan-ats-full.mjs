@@ -71,7 +71,7 @@ import { validateFlags } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { boardKey, loadDeadBoards, recordBoardResult, saveDeadBoards, shouldSkipDeadBoard } from './dead-boards.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
-import { buildDomainFilter } from './title-keywords.mjs';
+import { barePrefixDomainKeywords, buildDomainFilter } from './title-keywords.mjs';
 import { KNOWN_ATS_VENDORS } from './ats-vendor.mjs';
 import { loadHistoryAtsSeeds } from './history-ats-seeds.mjs';
 import { loadProviders } from './providers/_registry.mjs';
@@ -1077,6 +1077,14 @@ async function main() {
   // its exact behaviour and nobody loses a board without having asked for the
   // gate. buildDomainFilter returns null for an absent or empty list, which is
   // why the summary can tell "off" from "on and nothing was skipped".
+  // A bare `word:`/`stem:` would build a gate that matches nothing and drops
+  // every complete board, so refuse to start rather than sweep blind. Checked
+  // here as well as in validate-portals.mjs, which a direct run never calls.
+  const bareDomain = barePrefixDomainKeywords(config?.domain_filter);
+  if (bareDomain.length) {
+    console.error(`Error: portals.yml domain_filter[${bareDomain.join(', ')}]: a word:/stem: prefix needs a term after it.`);
+    process.exit(1);
+  }
   const domainFilter = buildDomainFilter(config?.domain_filter);
   if (!fullTitleFilterConfig?.positive?.length) {
     const key = config?.title_filter_full ? 'title_filter_full' : 'title_filter';
@@ -1229,6 +1237,9 @@ async function main() {
           postingsKept: partial.length,
           postingsDroppedNoDate: droppedNoDate,
           unreachableBoards: totalErrors + curErrors,
+          domainFilterActive: Boolean(domainFilter),
+          domainGatedBoards,
+          domainGatedPostings,
           offers: partial,
         }) + '\n', () => process.exit(0));
       } catch {

@@ -286,6 +286,26 @@ function compileDomainTerm(term) {
 }
 
 /**
+ * Indices of `domain_filter` entries with a bare `word:` or `stem:` prefix,
+ * alone or as one term of an AND-group (`solana + word:`).
+ *
+ * Such a term is nonblank, so normalization keeps it, but it compiles to a
+ * matcher that never fires: the gate stays ON and drops every complete board.
+ * validate-portals.mjs reports these and scan-ats-full.mjs refuses to start on
+ * them, so the definition lives here, beside the prefixes it is about.
+ *
+ * @param {unknown} domainKeywords - the raw `domain_filter` value from portals.yml.
+ * @returns {number[]}
+ */
+export function barePrefixDomainKeywords(domainKeywords) {
+  if (!Array.isArray(domainKeywords)) return [];
+  const bare = (t) => [WORD_PREFIX, STEM_PREFIX].some((p) => t.startsWith(p) && t.slice(p.length).trim() === '');
+  return domainKeywords.flatMap((item, idx) => (
+    typeof item === 'string' && item.split(AND_SEPARATOR).map((t) => t.trim().toLowerCase()).some(bare) ? [idx] : []
+  ));
+}
+
+/**
  * Compile a `domain_filter` list into one predicate, or null when the feature
  * is off.
  *
