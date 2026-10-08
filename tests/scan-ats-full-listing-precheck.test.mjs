@@ -8,7 +8,7 @@ import { pass, fail, ROOT } from './helpers.mjs';
 
 console.log('\nscan-ats-full — cheap listing pre-check');
 
-const { listingMayMatch } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
+const { listingMayMatch, undatedInListing } = await import(pathToFileURL(join(ROOT, 'scan-ats-full.mjs')).href);
 const greenhouse = (await import(pathToFileURL(join(ROOT, 'providers/greenhouse.mjs')).href)).default;
 
 const check = (ok, msg) => (ok ? pass(msg) : fail(msg));
@@ -28,6 +28,9 @@ check(!listingMayMatch([{ title: 'Solidity Engineer', postedAt: Date.parse('2026
   listingMayMatch([job('Solidity Engineer', null)], { cutoff, titleFilter: (t, slug) => { slugSeen = slug; return true; }, companySlug: 'acme' });
   check(slugSeen === 'acme', 'the company slug reaches the title filter (title_filter_overrides are per company)');
 }
+check(undatedInListing([job('Account Executive', null), job('Solidity Engineer', Date.parse('2026-10-05')), job('Old', Date.parse('2026-09-01'))], cutoff) === 1,
+  'a ruled-out board still reports its undated postings, as processJobs() would');
+check(undatedInListing([{ title: 'No URL', postedAt: null }], cutoff) === 0, 'a posting without a URL is not counted as undated');
 
 // greenhouse.fetchListing(): the list endpoint without content=true, mapped to title/url/postedAt
 {
