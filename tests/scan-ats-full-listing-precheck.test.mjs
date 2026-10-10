@@ -35,11 +35,13 @@ check(undatedInListing([{ title: 'No URL', postedAt: null }], cutoff) === 0, 'a 
 // greenhouse.fetchListing(): the list endpoint without content=true, mapped to title/url/postedAt
 {
   let requested = null;
+  let requestedOpts = null;
   const listing = await greenhouse.fetchListing(
     { name: 'Acme', api: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true' },
     {
-      fetchJson: async (url) => {
+      fetchJson: async (url, opts) => {
         requested = url;
+        requestedOpts = opts;
         return { jobs: [
           { id: 1, title: 'Solidity Engineer', absolute_url: 'https://job-boards.greenhouse.io/acme/jobs/1', first_published: '2026-10-05T10:00:00Z' },
           { id: 2, title: 'No URL' },
@@ -48,6 +50,7 @@ check(undatedInListing([{ title: 'No URL', postedAt: null }], cutoff) === 0, 'a 
     },
   );
   check(requested === 'https://boards-api.greenhouse.io/v1/boards/acme/jobs', `fetchListing drops a pinned content=true (requested ${requested})`);
+  check(requestedOpts?.redirect === 'error', 'fetchListing refuses redirects, as fetch() does');
   check(listing.length === 1 && listing[0].url === 'https://job-boards.greenhouse.io/acme/jobs/1', 'fetchListing keeps only postings with a URL');
   check(listing[0].postedAt === Date.parse('2026-10-05T10:00:00Z'), 'fetchListing dates postings from first_published, as fetch() does');
 }
