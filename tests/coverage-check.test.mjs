@@ -1,9 +1,9 @@
 // tests/coverage-check.test.mjs — why a posting the user found by hand was missed by the scanners
-import { mkdtempSync, readFileSync } from 'fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { pass, fail, rmSync } from './helpers.mjs';
-import { atsFromUrl, careersUrlFor, companyKey, findTrackedEntry, diagnose, appendMiss } from '../coverage-check.mjs';
+import { atsFromUrl, careersUrlFor, companyKey, findTrackedEntry, diagnose, appendMiss, loadDatasets } from '../coverage-check.mjs';
 
 console.log('\ncoverage-check.mjs — coverage-miss diagnosis');
 
@@ -37,6 +37,12 @@ const entries = [
 check(findTrackedEntry(entries, { ats: 'greenhouse', slug: 'coinbase', company: 'Whatever' })?.name.startsWith('Coinbase'), 'findTrackedEntry matches on board slug');
 check(findTrackedEntry(entries, { ats: null, slug: null, company: 'Coinbase' })?.name.startsWith('Coinbase'), 'findTrackedEntry ignores the parenthetical note in the entry name');
 check(findTrackedEntry(entries, { ats: 'ashby', slug: 'zeta', company: 'Zeta' }) === null, 'findTrackedEntry: unknown company is untracked');
+const twoBoards = [
+  { name: 'Coinbase', careers_url: 'https://job-boards.greenhouse.io/coinbase' },
+  { name: 'Coinbase Ventures', careers_url: 'https://jobs.ashbyhq.com/cbv' },
+];
+check(findTrackedEntry(twoBoards, { ats: 'ashby', slug: 'cbv', company: 'Coinbase' })?.name === 'Coinbase Ventures',
+  'findTrackedEntry: a board match wins over an earlier entry matching only by name');
 
 // 3. diagnose() over a synthetic context (no files, no network)
 const providers = new Map([
@@ -68,6 +74,13 @@ check(gap({ url: 'https://acme.com/careers/1', company: 'Acme Labs', title: 'Rus
 check(gap({ url: 'https://job-boards.greenhouse.io/coinbase/jobs/9', company: 'Coinbase', title: 'Head of Sales' }) === 'tracked-title-filter', 'tracked, title matches no keyword');
 check(gap({ url: 'https://job-boards.greenhouse.io/coinbase/jobs/9', company: 'Coinbase', title: 'Senior Rust Engineer' }) === 'tracked-not-seen', 'tracked, passes the filters, not in scan-history');
 check(gap({ url: 'https://job-boards.greenhouse.io/coinbase/jobs/9', company: 'Coinbase', title: 'Rust Engineer', location: 'New York' }) === 'tracked-location-filter', 'tracked, location dropped');
+check(!diagnose({ url: 'https://job-boards.greenhouse.io/coinbase/jobs/9', company: 'Coinbase', title: 'Senior Rust Engineer', location: '' }, ctx())
+  .evidence.some(e => e.startsWith('posting is on')), 'tracked on the same board: no board-mismatch evidence');
+
+// Matched by name, but the posting lives on another board: say so, and point the fix at that board
+const moved = diagnose({ url: 'https://jobs.ashbyhq.com/coinbase/9', company: 'Coinbase', title: 'Senior Rust Engineer', location: '' }, ctx());
+check(moved.evidence.includes('posting is on ashby:coinbase, entry reads greenhouse:coinbase'), 'name-only match: evidence names both boards');
+check(moved.gap === 'tracked-not-seen' && moved.fix.includes('https://jobs.ashbyhq.com/coinbase'), 'name-only match: the fix points at the posting\'s board');
 
 const untracked = diagnose({ url: 'https://jobs.ashbyhq.com/zeta/2', company: 'Zeta', title: 'Rust Engineer', location: '' }, ctx());
 check(untracked.gap === 'untracked', 'untracked company on a known ATS');
@@ -84,8 +97,18 @@ try {
   const posting = { url: 'https://jobs.ashbyhq.com/zeta/2', company: 'Zeta', title: 'Rust\tEngineer' };
   check(appendMiss(file, posting, untracked, 'note', '2026-10-07') === true, 'appendMiss writes a new URL');
   check(appendMiss(file, posting, untracked, 'note', '2026-10-07') === false, 'appendMiss skips a URL already logged');
+  check(appendMiss(file, { ...posting, url: 'https://jobs.ashbyhq.com/zeta/2/?utm_source=x' }, untracked, 'note', '2026-10-07') === false,
+    'appendMiss skips a variant of a logged URL (normalizeUrlForDedup)');
   const lines = readFileSync(file, 'utf8').trim().split('\n');
   check(lines.length === 2 && lines[0].startsWith('date\turl') && lines[1].split('\t').length === 7, 'log has one header and one 7-column row (tabs in fields folded)');
+
+  // 5. The reverse sweep's company lists: a damaged file is skipped, not fatal
+  writeFileSync(join(dir, 'greenhouse.json'), '["Acme", "Zeta"]');
+  writeFileSync(join(dir, 'lever.json'), '["acme", "ze');
+  writeFileSync(join(dir, 'ashby.json'), '{"acme": true}');
+  const datasets = loadDatasets(dir);
+  check(datasets.get('greenhouse')?.has('zeta') && !datasets.has('lever') && !datasets.has('ashby'),
+    'loadDatasets keeps a valid list and skips a truncated or non-array file');
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

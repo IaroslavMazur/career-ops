@@ -97,16 +97,18 @@ export function careersUrlFor({ ats, slug }) {
 // "Acme (EU roles only)" is Acme: entry names often carry a note in parentheses.
 export const companyKey = (name) => normalizeCompany(String(name || '').replace(/\([^)]*\)/g, ' '));
 
+// The boards an entry reads, as atsFromUrl() keys them.
+const entryBoards = (e) => ['careers_url', 'api']
+  .filter(field => typeof e[field] === 'string')
+  .map(field => atsFromUrl(e[field]));
+
+// A board match wins over a name match, so an entry named like the company
+// but reading another board never shadows the entry that reads this one.
 export function findTrackedEntry(entries, { ats, slug, company }) {
   const key = companyKey(company);
-  return entries.find((e) => {
-    for (const field of ['careers_url', 'api']) {
-      if (typeof e[field] !== 'string') continue;
-      const hit = atsFromUrl(e[field]);
-      if (slug && hit.ats === ats && hit.slug === slug) return true;
-    }
-    return key && companyKey(e.name) === key;
-  }) || null;
+  return (slug && entries.find(e => entryBoards(e).some(b => b.ats === ats && b.slug === slug)))
+    || (key && entries.find(e => companyKey(e.name) === key))
+    || null;
 }
 
 /**
@@ -139,6 +141,14 @@ export function diagnose(posting, ctx) {
   const entry = findTrackedEntry(ctx.entries, { ...target, company });
   if (entry) {
     evidence.push(`portals.yml entry "${entry.name}" (${entry.careers_url || entry.api || 'no careers_url'})`);
+    // Matched by name only: the company may have moved ATS or run a second board.
+    const boards = entryBoards(entry);
+    const otherBoard = Boolean(target.ats && target.slug)
+      && !boards.some(b => b.ats === target.ats && b.slug === target.slug);
+    if (otherBoard) {
+      const reads = boards.filter(b => b.ats).map(b => `${b.ats}:${b.slug ?? '?'}`).join(', ');
+      evidence.push(`posting is on ${target.ats}:${target.slug}, entry reads ${reads || (entry.careers_url || entry.api || 'no board')}`);
+    }
     if (entry.enabled === false) return { gap: 'tracked-disabled', evidence, fix: `re-enable "${entry.name}" if its board is live` };
     const resolved = resolveProvider(entry, ctx.providers);
     if (resolved && !resolved.error) {
@@ -161,6 +171,9 @@ export function diagnose(posting, ctx) {
     }
     if (!titleOk(title)) return { gap: 'tracked-title-filter', evidence, fix: `title keyword: no title_filter keyword matches "${title}"` };
     if (locationOk === false) return { gap: 'tracked-location-filter', evidence, fix: `location: location_filter drops "${location}"` };
+    if (otherBoard) {
+      return { gap: 'tracked-not-seen', evidence, fix: `the entry reads another board: point "${entry.name}".careers_url at ${careersUrlFor(target)}, or add that board as a second entry` };
+    }
     return { gap: 'tracked-not-seen', evidence, fix: 'none: newer than the last scan, or the provider did not return it (check its board once)' };
   }
 
@@ -212,20 +225,36 @@ export function loadContext() {
       if (key) (historyCompanies.get(key) || historyCompanies.set(key, new Set()).get(key)).add(row[2]);
     }
   }
-  const datasets = new Map();
-  for (const ats of ['greenhouse', 'lever', 'ashby', 'workday', 'icims']) {
-    const file = path.join(DATASET_DIR, `${ats}.json`);
-    if (existsSync(file)) datasets.set(ats, new Set(JSON.parse(readFileSync(file, 'utf8')).map(s => String(s).toLowerCase())));
-  }
+  const datasets = loadDatasets(DATASET_DIR);
   const pipelineText = existsSync(PIPELINE_PATH) ? readFileSync(PIPELINE_PATH, 'utf8') : '';
   return { config, entries, history, historyCompanies, datasets, pipelineText };
+}
+
+// The reverse sweep's company lists are optional evidence: a file truncated
+// by an interrupted sweep, or holding anything but an array, is skipped.
+export function loadDatasets(dir) {
+  const datasets = new Map();
+  for (const ats of ['greenhouse', 'lever', 'ashby', 'workday', 'icims']) {
+    const file = path.join(dir, `${ats}.json`);
+    if (!existsSync(file)) continue;
+    try {
+      const list = JSON.parse(readFileSync(file, 'utf8'));
+      if (Array.isArray(list)) datasets.set(ats, new Set(list.map(s => String(s).toLowerCase())));
+    } catch { /* unreadable: no reverse-sweep evidence for this ATS */ }
+  }
+  return datasets;
 }
 
 const clean = (s) => String(s ?? '').replace(/[\t\r\n]+/g, ' ').trim();
 
 export function appendMiss(file, posting, result, note, date) {
   const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  if (existing.split('\n').some(l => l.split('\t')[1] === posting.url)) return false;
+  const key = normalizeUrlForDedup(posting.url);
+  const logged = existing.split('\n').slice(1).some(l => {
+    const url = l.split('\t')[1];
+    return Boolean(url) && normalizeUrlForDedup(url) === key;
+  });
+  if (logged) return false;
   const row = [date, posting.url, posting.company, posting.title, result.gap, result.fix, note].map(clean).join('\t');
   appendFileSync(file, (existing ? '' : MISSES_HEADER + '\n') + row + '\n');
   return true;
